@@ -5,7 +5,7 @@
 
 set -euo pipefail
 
-VERSION="1.0.12"
+VERSION="1.0.13"
 
 if [[ "${1:-}" == "--version" || "${1:-}" == "-v" ]]; then
     echo "VPS Hardening Check v$VERSION"
@@ -165,9 +165,13 @@ if [ -f /etc/ssh/sshd_config.d/hardening.conf ]; then
         warn_check "MaxAuthTries not set"
     fi
 
-    if grep -q "AllowUsers" /etc/ssh/sshd_config.d/hardening.conf 2>/dev/null; then
-        ALLOWED=$(grep "AllowUsers" /etc/ssh/sshd_config.d/hardening.conf | awk '{$1=""; print $0}' | xargs)
-        pass "AllowUsers restricted to: $ALLOWED"
+    if grep -q "^AllowUsers" /etc/ssh/sshd_config.d/hardening.conf 2>/dev/null; then
+        ALLOWED=$(grep "^AllowUsers" /etc/ssh/sshd_config.d/hardening.conf | awk '{$1=""; print $0}' | xargs)
+        if [ -n "$ALLOWED" ]; then
+            pass "AllowUsers restricted to: $ALLOWED"
+        else
+            fail "AllowUsers is configured but empty"
+        fi
     else
         warn_check "AllowUsers not yet set (normal if final SSH confirmation not done)"
     fi
@@ -201,8 +205,14 @@ else
 fi
 
 if [ -f /etc/systemd/system/ssh.socket.d/override.conf ]; then
-    SOCKET_PORT=$(grep "ListenStream=" /etc/systemd/system/ssh.socket.d/override.conf | tail -1)
-    pass "SSH socket reconfigured ($SOCKET_PORT)"
+    SOCKET_STREAMS=$(grep "^ListenStream=" /etc/systemd/system/ssh.socket.d/override.conf | grep -v "^ListenStream=$" || true)
+    if [ -z "$SOCKET_STREAMS" ]; then
+        fail "SSH socket override exists but has no configured ListenStream port"
+    elif [ -n "${SSH_PORT:-}" ] && ! printf '%s\n' "$SOCKET_STREAMS" | grep -Eq "(:|=)$SSH_PORT$"; then
+        warn_check "SSH socket override does not reference SSH port $SSH_PORT"
+    else
+        pass "SSH socket reconfigured ($(printf '%s' "$SOCKET_STREAMS" | xargs))"
+    fi
 else
     warn_check "SSH socket override not found -- may revert to port 22 after reboot"
 fi
@@ -348,7 +358,11 @@ if systemctl is-active fail2ban &>/dev/null; then
         fi
     fi
 else
-    fail "Fail2Ban is NOT running"
+    if systemctl is-active crowdsec &>/dev/null && systemctl is-active crowdsec-firewall-bouncer &>/dev/null; then
+        pass "CrowdSec + firewall bouncer active (Fail2Ban alternative)"
+    else
+        fail "Neither Fail2Ban nor CrowdSec firewall bouncer is running"
+    fi
 fi
 
 # === KERNEL HARDENING ===
@@ -689,6 +703,14 @@ if command -v docker &>/dev/null; then
         pass "DOCKER-USER allows Docker internal IPv6 (fd00::/8)"
     else
         warn_check "DOCKER-USER missing Docker internal IPv6 rule (fd00::/8)"
+    fi
+
+    if sudo iptables -L DOCKER-USER -n 2>/dev/null | grep -q "dpt:3000"; then
+        warn_check "DOCKER-USER still allows Dokploy setup port 3000 (close after domain + HTTPS setup)"
+    elif sudo ip6tables -L DOCKER-USER -n 2>/dev/null | grep -q "dpt:3000"; then
+        warn_check "DOCKER-USER IPv6 still allows Dokploy setup port 3000 (close after domain + HTTPS setup)"
+    else
+        pass "DOCKER-USER does not expose Dokploy setup port 3000"
     fi
 
     # === DOKPLOY / TRAEFIK (only if Docker is present) ===

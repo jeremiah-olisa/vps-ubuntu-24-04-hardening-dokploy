@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-VERSION="1.0.12"
+VERSION="1.0.13"
 
 if [[ "${1:-}" == "--version" || "${1:-}" == "-v" ]]; then
     echo "VPS Hardening Script v$VERSION"
@@ -491,6 +491,7 @@ sleep 2
 
 START_TIME=$SECONDS
 
+run_pre_checks() {
 # === PRE-CHECKS ===
 progress_bar 0 "$TOTAL_STEPS" "Pre-flight checks"
 SETUP_PHASE="pre-checks"
@@ -509,7 +510,10 @@ if ! curl -s --max-time 5 https://api.ipify.org &>/dev/null; then
     error "No internet connection (TCP/443 unreachable)"
 fi
 log "All pre-checks passed"
+}
+run_pre_checks
 
+create_secure_user() {
 # === STEP 1: CREATE USER ===
 CURRENT_STEP=1
 progress_bar "$CURRENT_STEP" "$TOTAL_STEPS" "Create secure user"
@@ -537,7 +541,10 @@ log "User '$NEW_USER' created with password"
 
 sudo usermod -aG sudo "$NEW_USER"
 log "Sudo access granted"
+}
+create_secure_user
 
+configure_ssh_key() {
 # === STEP 2: SSH KEY ===
 CURRENT_STEP=2
 progress_bar "$CURRENT_STEP" "$TOTAL_STEPS" "Configure SSH key"
@@ -599,7 +606,10 @@ fi
 sudo chmod 700 "/home/$NEW_USER/.ssh"
 sudo chmod 600 "/home/$NEW_USER/.ssh/authorized_keys"
 sudo chown -R "$NEW_USER:$NEW_USER" "/home/$NEW_USER/.ssh"
+}
+configure_ssh_key
 
+configure_system_baseline() {
 # === STEP 3: SYSTEM UPDATE ===
 CURRENT_STEP=3
 progress_bar "$CURRENT_STEP" "$TOTAL_STEPS" "Update system (~2-3 min)"
@@ -669,7 +679,10 @@ DNSSEC=allow-downgrade
 EOF
 sudo systemctl restart systemd-resolved
 log "Quad9 DNS configured with DNS-over-TLS + DNSSEC (allow-downgrade)"
+}
+configure_system_baseline
 
+configure_sysctl() {
 # === STEP 4: KERNEL HARDENING ===
 CURRENT_STEP=4
 progress_bar "$CURRENT_STEP" "$TOTAL_STEPS" "Kernel hardening (sysctl)"
@@ -732,7 +745,10 @@ install rds /bin/true
 install tipc /bin/true
 MODPROBE
 log "Uncommon network protocols disabled (dccp, sctp, rds, tipc)"
+}
+configure_sysctl
 
+configure_security_tools() {
 # === STEP 5: INSTALL SECURITY TOOLS + CONFIGURE ===
 CURRENT_STEP=5
 progress_bar "$CURRENT_STEP" "$TOTAL_STEPS" "Install security tools (~1-2 min)"
@@ -883,7 +899,10 @@ else
     sudo systemctl start apparmor
     log "AppArmor installed and enabled"
 fi
+}
+configure_security_tools
 
+configure_ufw() {
 # === STEP 6: CONFIGURE FIREWALL ===
 # Firewall MUST be configured BEFORE Fail2Ban so that:
 # 1. Fail2Ban starts with a working firewall underneath
@@ -926,7 +945,10 @@ bantime.factor = 2
 EOF
 sudo systemctl restart fail2ban
 log "Fail2Ban configured (ports 22 and $SSH_PORT)"
+}
+configure_ufw
 
+configure_ssh() {
 # === STEP 7: CONFIGURE SSH ===
 CURRENT_STEP=7
 progress_bar "$CURRENT_STEP" "$TOTAL_STEPS" "Harden SSH"
@@ -1009,7 +1031,10 @@ log "SSH hardened (port $SSH_PORT)"
     echo "LOG_WEEKS=$LOG_WEEKS"
     echo "CURRENT_USER=$CURRENT_USER"
 } | sudo tee -a "$CONFIG_FILE" > /dev/null
+}
+configure_ssh
 
+write_summary() {
 # === SETUP COMPLETE — PREPARE SUMMARY ===
 progress_bar "$TOTAL_STEPS" "$TOTAL_STEPS" "All steps completed"
 SETUP_PHASE="ssh-test"
@@ -1077,6 +1102,8 @@ fi
 
 sudo chown -R "$NEW_USER:$NEW_USER" "$SCRIPTS_DIR"
 log "Post-install scripts downloaded to $SCRIPTS_DIR"
+}
+write_summary
 
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║  PHASE 3 — SSH TEST + CONFIRM (interactive)                       ║
@@ -1084,6 +1111,7 @@ log "Post-install scripts downloaded to $SCRIPTS_DIR"
 # ║  The user can CONFIRM manually later.                              ║
 # ╚════════════════════════════════════════════════════════════════════╝
 
+schedule_auto_lockdown() {
 # Schedule auto-lockdown in 24h if CONFIRM is not completed
 # This prevents port 22 + password auth from staying open indefinitely
 if command -v at &>/dev/null; then
@@ -1113,7 +1141,10 @@ fi
 LOCKDOWN_EOF
     log "Auto-lockdown scheduled in 24h if CONFIRM not completed"
 fi
+}
+schedule_auto_lockdown
 
+finalize_confirm() {
 if ! tty -s 2>/dev/null; then
     warn "Terminal lost. Setup complete but port 22 and password auth still open."
     warn "Reconnect and run the CONFIRM step manually — see $USER_HOME/.vps_setup_summary"
@@ -1269,7 +1300,10 @@ else
     printf "  sudo systemctl restart ssh.socket\n"
     printf "  sudo ufw delete allow 22/tcp\n"
 fi
+}
+finalize_confirm
 
+offer_old_user_cleanup() {
 # === OPTIONAL: REMOVE OLD USER ===
 OLD_USER="$CURRENT_USER"
 
@@ -1308,7 +1342,10 @@ else
         fi
     fi
 fi
+}
+offer_old_user_cleanup
 
+print_final_summary() {
 # === FINAL SUMMARY ===
 echo ""
 
@@ -1344,3 +1381,5 @@ printf "  $(gum style --bold --foreground 6 '6')  sudo ./purge.sh    — remove 
 echo ""
 
 printf '\a'
+}
+print_final_summary

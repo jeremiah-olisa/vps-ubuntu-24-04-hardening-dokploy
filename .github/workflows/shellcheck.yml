@@ -27,3 +27,29 @@ jobs:
             echo "Checking $f..."
             bash -n "$f"
           done
+
+      - name: Verify Gum GPG fingerprint consistency
+        run: |
+          set -euo pipefail
+
+          scripts=(setup.sh cleanup.sh check.sh purge.sh)
+          expected=""
+
+          for script in "${scripts[@]}"; do
+            fp=$(awk -F'"' '/EXPECTED_FP=/{print $2; exit}' "$script")
+            if [ -z "$fp" ]; then
+              echo "::error file=$script::Missing EXPECTED_FP for Gum installer"
+              exit 1
+            fi
+
+            if [ -z "$expected" ]; then
+              expected="$fp"
+            elif [ "$fp" != "$expected" ]; then
+              echo "::error file=$script::Gum EXPECTED_FP differs from the other scripts"
+              echo "Expected: $expected"
+              echo "Got:      $fp"
+              exit 1
+            fi
+          done
+
+          echo "Gum EXPECTED_FP is consistent across: ${scripts[*]}"

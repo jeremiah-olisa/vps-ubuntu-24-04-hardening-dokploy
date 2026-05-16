@@ -11,7 +11,12 @@
 
 set -euo pipefail
 
-VERSION="1.0.12"
+VERSION="1.0.13"
+
+if [[ "${1:-}" == "--version" || "${1:-}" == "-v" ]]; then
+    echo "Docker + Dokploy Installer v$VERSION"
+    exit 0
+fi
 
 # === ROOT CHECK ===
 if [ "$(id -u)" -ne 0 ]; then

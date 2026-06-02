@@ -176,7 +176,6 @@ cleanup_on_error() {
             sudo ufw allow 22/tcp 2>/dev/null || true
             restore_ssh_auth_dropin_backups
             sudo rm -f /etc/cloud/cloud.cfg.d/99-vps-hardening-ssh.cfg 2>/dev/null || true
-            sudo rm -f /etc/ssh/sshd_config.d/hardening.conf 2>/dev/null || true
             sudo rm -f /etc/ssh/sshd_config.d/zz-setup-keepalive.conf 2>/dev/null || true
             sudo rm -f /etc/systemd/system/ssh.socket.d/override.conf 2>/dev/null || true
             sudo rmdir /etc/systemd/system/ssh.socket.d 2>/dev/null || true
@@ -1168,7 +1167,7 @@ fi
 # Ciphers include fallbacks (aes256-ctr, hmac-sha2-256) for Termius compatibility
 sudo mkdir -p /etc/ssh/sshd_config.d
 neutralize_ssh_auth_dropins
-sudo tee /etc/ssh/sshd_config.d/hardening.conf > /dev/null << EOF
+sudo tee /etc/ssh/sshd_config.d/hardening.conf > /dev/null << EOF || error "Failed to write SSH hardening config"
 Port 22
 Port $SSH_PORT
 PermitRootLogin no
@@ -1494,7 +1493,7 @@ if gum confirm "Did the NEW SSH connection work?"; then
         echo ""
         neutralize_ssh_auth_dropins
         disable_cloud_init_password_auth
-        sudo tee /etc/ssh/sshd_config.d/hardening.conf > /dev/null << EOF
+        sudo tee /etc/ssh/sshd_config.d/hardening.conf > /dev/null << EOF || error "Failed to write hardening.conf"
 Port $SSH_PORT
 PermitRootLogin no
         PasswordAuthentication no

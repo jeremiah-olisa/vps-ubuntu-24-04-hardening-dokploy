@@ -27,16 +27,40 @@ fi
 
 # === AUTO-SCREEN ===
 # If not inside screen, relaunch inside screen so the script survives SSH drops.
-# The user can reconnect with: screen -r hardening
+# The user can reconnect with: sudo screen -r hardening
 if [ -z "${STY:-}" ]; then
     if ! command -v screen &>/dev/null; then
         apt-get install -y -qq screen 2>/dev/null || true
     fi
     if command -v screen &>/dev/null; then
-        echo "Launching inside screen (reconnect with: screen -r hardening)"
-        exec screen -S hardening bash "$0" "$@"
+        echo ""
+        echo "  >>> Screen session started: 'hardening' (owned by root) <<<"
+        echo "  >>> If disconnected, reconnect and run: sudo screen -r hardening <<<"
+        echo ""
+        exec screen -S hardening bash "$0" "$@" || {
+            echo "[FATAL] Failed to launch screen session. Cannot continue safely."
+            exit 1
+        }
     fi
 fi
+
+# Write recovery instructions so the user knows how to reattach after a disconnect
+sudo tee /root/.vps_screen_recovery > /dev/null << 'EOF'
+=== VPS Hardening Screen Recovery ===
+
+If your SSH session disconnected, the script is still running inside a
+screen session named 'hardening' (owned by root).
+
+Reconnect to your server, then run:
+
+    sudo screen -r hardening
+
+If that fails, run:
+
+    sudo screen -dr hardening
+
+Then continue at the CONFIRM step manually.
+EOF
 
 # === CONFIGURATION ===
 CURRENT_USER="${SUDO_USER:-$(whoami)}"
@@ -556,6 +580,7 @@ sudo chmod 640 "$LOG_FILE"
 echo "=== VPS Hardening Setup v$VERSION - $(date) ===" | sudo tee "$LOG_FILE" > /dev/null
 
 echo "SSH_PORT=$SSH_PORT" | sudo tee "$CONFIG_FILE" > /dev/null
+echo "SCREEN_RECOVERY=sudo screen -r hardening" | sudo tee -a "$CONFIG_FILE" > /dev/null
 sudo chmod 600 "$CONFIG_FILE"
 
 if ! grep -q "Ubuntu 24" /etc/os-release 2>/dev/null; then
@@ -680,6 +705,7 @@ ClientAliveInterval 15
 ClientAliveCountMax 10
 KEEPALIVE
     sudo systemctl reload ssh 2>/dev/null || sudo systemctl reload ssh.service 2>/dev/null || true
+    sleep 2
     log "SSH keepalive configured (15s interval, 10 retries)"
 fi
 
@@ -1110,6 +1136,51 @@ log "SSH hardened (port $SSH_PORT)"
 }
 configure_ssh
 
+install_cloudflared() {
+# === OPTIONAL: CLOUDFLARED (Cloudflare Tunnel) ===
+# Installs cloudflared and authenticates with Cloudflare.
+# The user must complete authentication via a browser URL.
+if gum confirm "Install Cloudflare Tunnel (cloudflared) for web traffic?"; then
+    echo ""
+    gum style --bold --foreground 6 "  Installing cloudflared from Cloudflare's official repo..."
+    echo ""
+
+    # Download and add the Cloudflare GPG key and repo
+    sudo mkdir -p /etc/apt/keyrings
+    local CLOUD_KEYRING_TMP
+    CLOUD_KEYRING_TMP=$(mktemp)
+    curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg -o "$CLOUD_KEYRING_TMP" 2>/dev/null || {
+        error "Failed to download Cloudflare GPG key"
+    }
+    sudo gpg --yes --dearmor -o /etc/apt/keyrings/cloudflare.gpg < "$CLOUD_KEYRING_TMP" 2>/dev/null
+    rm -f "$CLOUD_KEYRING_TMP"
+
+    local UBUNTU_CODENAME
+    UBUNTU_CODENAME=$(. /etc/os-release && echo "$VERSION_CODENAME")
+    echo "deb [signed-by=/etc/apt/keyrings/cloudflare.gpg] https://pkg.cloudflare.com/cloudflared $UBUNTU_CODENAME main" | sudo tee /etc/apt/sources.list.d/cloudflared.list > /dev/null
+
+    wait_for_apt
+    run_with_spinner "Installing cloudflared" sudo apt-get install -y -qq cloudflared
+
+    if command -v cloudflared &>/dev/null; then
+        log "cloudflared installed (run 'cloudflared tunnel login' to authenticate)"
+
+        gum style --border rounded --border-foreground 3 --foreground 3 --padding "0 2" --margin "0 2" \
+            "⚠  cloudflared installed" \
+            "" \
+            "After setup completes, authenticate and create a tunnel:" \
+            "  cloudflared tunnel login" \
+            "  cloudflared tunnel create <name>" \
+            "  cloudflared tunnel route dns <name> <domain>" \
+            "  cloudflared tunnel run <name>"
+        echo ""
+    else
+        warn "cloudflared installation failed — skipping"
+    fi
+fi
+}
+install_cloudflared
+
 write_summary() {
 # === SETUP COMPLETE — PREPARE SUMMARY ===
 progress_bar "$TOTAL_STEPS" "$TOTAL_STEPS" "All steps completed"
@@ -1275,6 +1346,7 @@ gum style \
     "CRITICAL: Verify SSH before lock-down" \
     "" \
     "Keep this terminal open." \
+    "If disconnected: sudo screen -r hardening" \
     "Open exact port $SSH_PORT in your provider firewall if needed." \
     "Do not open the full 50000-60000 range." \
     "Then open a NEW terminal and test:"

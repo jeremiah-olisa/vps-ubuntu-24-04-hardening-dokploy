@@ -33,7 +33,7 @@ sudo -i
 curl -sSL https://raw.githubusercontent.com/alexandreravelli/vps-ubuntu-24-04-hardening-dokploy/release-1.0.16/setup.sh -o setup.sh && chmod +x setup.sh && ./setup.sh
 ```
 
-The script answers all your questions first, then applies hardening automatically. If your SSH session drops during hardening, the script continues in the background — reconnect with `screen -r hardening`.
+The script answers all your questions first, then applies hardening automatically. If your SSH session drops during hardening, the script continues in the background — reconnect with `sudo screen -r hardening`.
 
 ### Step 2 — Install Docker + Dokploy (optional)
 
@@ -89,8 +89,9 @@ Phase 3 — SSH test + CONFIRM     (interactive — if SSH drops, server is safe
 | 5 | **Tools** | UFW, Fail2Ban, auditd, AppArmor, unattended-upgrades, log retention policy | ~2-3min |
 | 6 | **Firewall** | UFW deny-by-default, allow custom SSH port + 80 + 443 | ~5s |
 | 7 | **SSH** | Random port 50000-60000, key-only auth, no root login | ~5s |
+| — | **Cloudflare Tunnel** (optional) | Prompts to install `cloudflared` from Cloudflare's official repo | ~30s |
 
-> After step 7, the script asks you to test a new SSH session on the custom port. Only after you confirm the new SSH session works and type `CONFIRM` will it close port 22 and disable password auth.
+> After step 7, the script asks whether to install Cloudflare Tunnel (`cloudflared`), then asks you to test a new SSH session on the custom port. Only after you confirm the new SSH session works and type `CONFIRM` will it close port 22 and disable password auth.
 
 ### install-dokploy.sh — Docker + Dokploy
 
@@ -336,7 +337,7 @@ The script applies a production-oriented hardening baseline with **5 security la
 
 | Feature | Details |
 |---------|---------|
-| Screen session | Both scripts run inside `screen` — survives SSH disconnection. Reconnect with `screen -r hardening` or `screen -r dokploy-install` |
+| Screen session | Both scripts run inside `screen` — survives SSH disconnection. Reconnect with `sudo screen -r hardening` (or `sudo screen -r dokploy-install`). A recovery file is saved at `/root/.vps_screen_recovery`. |
 | Input-first design | All questions asked before any system changes — if SSH drops during input, nothing is modified |
 | Error trap | Restores SSH access on port 22 if setup fails |
 | Config backup | `sshd_config.bak` saved before changes |
@@ -362,11 +363,18 @@ The script applies a production-oriented hardening baseline with **5 security la
 <details>
 <summary><strong>What if my SSH session drops during setup?</strong></summary>
 
-The script runs inside `screen`. Reconnect to your server and run:
+The script runs inside `screen` as `root`. Reconnect to your server and run:
 
 ```bash
-screen -r hardening
+sudo screen -r hardening
 ```
+
+If that fails, try:
+```bash
+sudo screen -dr hardening
+```
+
+A recovery file is also saved at `/root/.vps_screen_recovery` with these commands.
 
 If the script was in Phase 2 (applying hardening), it continued running. If it was in Phase 1 (asking questions), nothing was modified — just restart the script.
 
@@ -446,7 +454,7 @@ Tested on 24.04 LTS only. Ubuntu 22.04 is **not supported** (different SSH servi
 
 | File | Purpose |
 |------|---------|
-| `setup.sh` | Server hardening — 3 phases, 7 steps, survives SSH drops |
+| `setup.sh` | Server hardening — 3 phases, 7 steps + optional cloudflared, survives SSH drops |
 | `install-dokploy.sh` | Docker + Dokploy installer (run after setup.sh) |
 | `allow-docker-port.sh` | Allow one intentional public Docker port through UFW + DOCKER-USER |
 | `remove-docker-port.sh` | Remove one intentional public Docker port from UFW + DOCKER-USER |

@@ -30,7 +30,7 @@ sudo -i
 ```
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/alexandreravelli/vps-ubuntu-24-04-hardening-dokploy/release-1.0.16/setup.sh -o setup.sh && chmod +x setup.sh && ./setup.sh
+curl -sSL https://raw.githubusercontent.com/jeremiah-olisa/vps-ubuntu-24-04-hardening-dokploy/main/setup.sh -o setup.sh && chmod +x setup.sh && ./setup.sh
 ```
 
 The script answers all your questions first, then applies hardening automatically. If your SSH session drops during hardening, the script continues in the background — reconnect with `sudo screen -r hardening`.

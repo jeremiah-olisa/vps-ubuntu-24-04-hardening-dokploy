@@ -1,7 +1,7 @@
 #!/bin/bash
 # VPS Hardening Script
 # Ubuntu 24.04 LTS
-# https://github.com/alexandreravelli/vps-ubuntu-24-04-hardening-dokploy
+# https://github.com/jeremiah-olisa/vps-ubuntu-24-04-hardening-dokploy
 # Usage: sudo bash setup.sh
 #
 # Architecture:
@@ -1229,7 +1229,7 @@ LOCAL_SCRIPT_SET_COMPLETE=true
 POST_INSTALL_SCRIPTS=(cleanup.sh check.sh purge.sh install-dokploy.sh allow-docker-port.sh remove-docker-port.sh)
 # Pin to release tag so a compromised main branch cannot inject code into
 # servers that already ran setup.sh with this version.
-REPO_BASE="https://raw.githubusercontent.com/alexandreravelli/vps-ubuntu-24-04-hardening-dokploy/release-${VERSION}"
+REPO_BASE="https://raw.githubusercontent.com/jeremiah-olisa/vps-ubuntu-24-04-hardening-dokploy/main"
 
 for script in "${POST_INSTALL_SCRIPTS[@]}"; do
     [ -f "$LOCAL_SCRIPT_DIR/$script" ] || LOCAL_SCRIPT_SET_COMPLETE=false

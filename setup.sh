@@ -499,11 +499,11 @@ elif [ "$SSH_PORT_CHOICE" = "Custom port — input your own" ]; then
             warn "Port must be between 1024 and 65535"; continue
         fi
         if ss -tlnp 2>/dev/null | grep -q ":$CUSTOM_PORT "; then
-            _port_proc=$(ss -tlnp 2>/dev/null | grep ":$CUSTOM_PORT " | grep -oP 'users:\(\("([^"]+)"' | cut -d'"' -f2)
-            if [ "$_port_proc" = "sshd" ]; then
-                log "Port $CUSTOM_PORT is already in use by sshd — allowing"
+            _saved_port=$(grep "^SSH_PORT=" "$CONFIG_FILE" 2>/dev/null | cut -d= -f2)
+            if [ "$CUSTOM_PORT" = "$_saved_port" ]; then
+                log "Port $CUSTOM_PORT is our configured SSH port — allowing"
             else
-                warn "Port $CUSTOM_PORT is already in use by $_port_proc"; continue
+                warn "Port $CUSTOM_PORT is already in use"; continue
             fi
         fi
         SSH_PORT=$CUSTOM_PORT

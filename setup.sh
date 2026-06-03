@@ -1577,17 +1577,6 @@ else
         exit 0
     fi
 fi
-echo ""
-echo ""
-printf "  \033[1;33mThis server will reboot in 10 seconds to finalize SSH hardening.\033[0m\n"
-printf "  \033[1;33mReconnect with: ssh %s@%s -p %s\033[0m\n" "$NEW_USER" "$SSH_HOST" "$SSH_PORT"
-echo ""
-for i in 10 9 8 7 6 5 4 3 2 1; do
-    printf "\r  \033[1;31m%s...\033[0m " "$i"
-    sleep 1
-done
-printf "\r  \033[1;31mRebooting now...\033[0m\n"
-echo ""
 neutralize_ssh_auth_dropins
 disable_cloud_init_password_auth
 sudo tee /etc/ssh/sshd_config.d/hardening.conf > /dev/null << EOF || error "Failed to write hardening.conf"
@@ -1670,16 +1659,36 @@ echo "-e 2" | sudo tee -a /etc/audit/rules.d/hardening.rules > /dev/null || erro
 sudo systemctl restart auditd 2>/dev/null || true
 log "Audit rules locked (immutable)"
 
-# Remove temporary setup files (keep sshd_test_config — standalone sshd needs it until reboot)
+# Remove temporary setup files
 sudo rm -f /etc/ssh/sshd_config.d/zz-setup-keepalive.conf
 
 sudo sed -i 's/STATUS=pending_confirm/STATUS=complete/' "$USER_HOME/.vps_setup_summary" || error "Failed to update setup summary status"
 sudo touch "$HARDENING_DONE_FILE"
 checkpoint_clear
-log "Port 22 closed, password auth disabled, rebooting to finalize"
 
-# Reboot to let ssh.socket take over on the custom port
-sudo shutdown -r now --no-wall 2>/dev/null || sudo reboot
+if [ "$RESUME_MODE" = true ]; then
+    echo ""
+    echo ""
+    printf "  \033[1;32mHardening finalized — SSH already active on port %s, no reboot needed\033[0m\n" "$SSH_PORT"
+    printf "  \033[1;32mReconnect with: ssh %s@%s -p %s\033[0m\n" "$NEW_USER" "$SSH_HOST" "$SSH_PORT"
+    echo ""
+    log "Hardening complete (resume mode — skipped reboot)"
+else
+    log "Port 22 closed, password auth disabled, rebooting to finalize"
+    echo ""
+    echo ""
+    printf "  \033[1;33mThis server will reboot in 10 seconds to finalize SSH hardening.\033[0m\n"
+    printf "  \033[1;33mReconnect with: ssh %s@%s -p %s\033[0m\n" "$NEW_USER" "$SSH_HOST" "$SSH_PORT"
+    echo ""
+    for i in 10 9 8 7 6 5 4 3 2 1; do
+        printf "\r  \033[1;31m%s...\033[0m " "$i"
+        sleep 1
+    done
+    printf "\r  \033[1;31mRebooting now...\033[0m\n"
+
+    # Reboot to let ssh.socket take over on the custom port
+    sudo shutdown -r now --no-wall 2>/dev/null || sudo reboot
+fi
 }
 finalize_confirm
 

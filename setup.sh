@@ -67,21 +67,7 @@ trap 'code=$?; if [ "$code" -ne 0 ] && [ -n "${STY:-}" ]; then echo ""; echo "  
 
 # === CONFIGURATION ===
 CURRENT_USER="${SUDO_USER:-$(whoami)}"
-MAX_PORT_ATTEMPTS=10
-for _port_try in $(seq 1 $MAX_PORT_ATTEMPTS); do
-    if command -v shuf &>/dev/null; then
-        SSH_PORT=$(shuf -i 50000-60000 -n 1)
-    else
-        SSH_PORT=$(( (RANDOM % 10000) + 50000 ))
-    fi
-    if ! ss -tlnp 2>/dev/null | grep -q ":$SSH_PORT "; then
-        break
-    fi
-    if [ "$_port_try" -eq "$MAX_PORT_ATTEMPTS" ]; then
-        echo "Could not find an available port in range 50000-60000"
-        exit 1
-    fi
-done
+SSH_PORT=22
 LOG_FILE="/var/log/vps_setup.log"
 CONFIG_FILE="/root/.vps_hardening_config"
 TOTAL_STEPS=7
@@ -407,7 +393,7 @@ printf "  $(gum style --foreground 240 '3')  Update system, auto-sized swap, DNS
 printf "  $(gum style --foreground 240 '4')  Kernel hardening: anti-spoofing, ASLR, SYN\n"
 printf "  $(gum style --foreground 240 '5')  Install UFW · Fail2Ban · AppArmor · auditd · log retention\n"
 printf "  $(gum style --foreground 240 '6')  Firewall: deny-by-default, allow custom SSH + 80 + 443\n"
-printf "  $(gum style --foreground 240 '7')  SSH: random port 50000-60000, key-only auth after confirmation\n"
+printf "  $(gum style --foreground 240 '7')  SSH: random/custom/22 port, key-only auth after confirmation\n"
 echo ""
 
 gum style --bold --foreground 2 "  PREREQUISITES"
@@ -453,40 +439,93 @@ elif grep -qi "digitalocean\|vultr" /sys/class/dmi/id/board_vendor 2>/dev/null; 
     HAS_CLOUD_FIREWALL=true
 fi
 
-if [ "$HAS_CLOUD_FIREWALL" = true ]; then
-    gum style \
-        --border rounded \
-        --border-foreground 3 \
-        --foreground 3 \
-        --padding "0 2" \
-        --margin "0 2" \
-        "⚠  PROVIDER FIREWALL CHECK" \
-        "Open these ports in your provider's control panel BEFORE running:" \
-        "" \
-        "$(printf '  YOUR NEW SSH PORT: %s' "$SSH_PORT")" \
-        "  Open this exact SSH port only. Do not open the full 50000-60000 range." \
-        "" \
-        "$(printf '  %5s        SSH (temporary — closed after setup)' '22')" \
-        "$(printf '  %5s        HTTP' '80')" \
-        "$(printf '  %5s        HTTPS' '443')" \
-        "$(printf '  %5s        SSH (custom port for this install)' "$SSH_PORT")"
+# === SSH PORT SELECTION ===
+input_banner "Choose your SSH port"
+
+SSH_PORT_CHOICE=$(gum choose --header "SSH port (use ↑↓ to navigate, enter to select)" \
+    "Random port (50000-60000) — recommended" \
+    "Custom port — input your own" \
+    "Keep port 22 (default)")
+
+if [ "$SSH_PORT_CHOICE" = "Random port (50000-60000) — recommended" ]; then
+    SSH_PORT=22
+    _max_attempts=10
+    for _port_try in $(seq 1 $_max_attempts); do
+        if command -v shuf &>/dev/null; then
+            _try_port=$(shuf -i 50000-60000 -n 1)
+        else
+            _try_port=$(( (RANDOM % 10000) + 50000 ))
+        fi
+        if ! ss -tlnp 2>/dev/null | grep -q ":$_try_port "; then
+            SSH_PORT=$_try_port
+            break
+        fi
+    done
+    if [ "$SSH_PORT" = "22" ]; then
+        echo "  Could not find an available port in range 50000-60000"
+        exit 1
+    fi
+    log "Random SSH port selected: $SSH_PORT"
+elif [ "$SSH_PORT_CHOICE" = "Custom port — input your own" ]; then
+    while true; do
+        CUSTOM_PORT=$(gum input --placeholder "Port number (1024-65535)" --prompt "> " --prompt.foreground 6)
+        if [ -z "$CUSTOM_PORT" ]; then
+            warn "Port cannot be empty"; continue
+        fi
+        if ! echo "$CUSTOM_PORT" | grep -qE '^[0-9]+$'; then
+            warn "Port must be a number"; continue
+        fi
+        if [ "$CUSTOM_PORT" -lt 1024 ] || [ "$CUSTOM_PORT" -gt 65535 ]; then
+            warn "Port must be between 1024 and 65535"; continue
+        fi
+        if ss -tlnp 2>/dev/null | grep -q ":$CUSTOM_PORT "; then
+            warn "Port $CUSTOM_PORT is already in use"; continue
+        fi
+        SSH_PORT=$CUSTOM_PORT
+        break
+    done
+    log "Custom SSH port selected: $SSH_PORT"
 else
-    gum style \
-        --border rounded \
-        --border-foreground 3 \
-        --foreground 3 \
-        --padding "0 2" \
-        --margin "0 2" \
-        "⚠  PROVIDER FIREWALL CHECK" \
-        "If your provider has a network firewall, open these ports BEFORE running:" \
-        "" \
-        "$(printf '  YOUR NEW SSH PORT: %s' "$SSH_PORT")" \
-        "  Open this exact SSH port only. Do not open the full 50000-60000 range." \
-        "" \
-        "$(printf '  %5s        SSH (temporary — closed after setup)' '22')" \
-        "$(printf '  %5s        HTTP' '80')" \
-        "$(printf '  %5s        HTTPS' '443')" \
-        "$(printf '  %5s        SSH (custom port for this install)' "$SSH_PORT")"
+    SSH_PORT=22
+    log "Keeping default SSH port: 22"
+fi
+
+if [ "$SSH_PORT" != "22" ]; then
+    if [ "$HAS_CLOUD_FIREWALL" = true ]; then
+        gum style \
+            --border rounded \
+            --border-foreground 3 \
+            --foreground 3 \
+            --padding "0 2" \
+            --margin "0 2" \
+            "⚠  PROVIDER FIREWALL CHECK" \
+            "Open these ports in your provider's control panel BEFORE running:" \
+            "" \
+            "$(printf '  YOUR NEW SSH PORT: %s' "$SSH_PORT")" \
+            "  Open this exact SSH port only. Do not open the full 50000-60000 range." \
+            "" \
+            "$(printf '  %5s        SSH (temporary — closed after setup)' '22')" \
+            "$(printf '  %5s        HTTP' '80')" \
+            "$(printf '  %5s        HTTPS' '443')" \
+            "$(printf '  %5s        SSH (custom port for this install)' "$SSH_PORT")"
+    else
+        gum style \
+            --border rounded \
+            --border-foreground 3 \
+            --foreground 3 \
+            --padding "0 2" \
+            --margin "0 2" \
+            "⚠  PROVIDER FIREWALL CHECK" \
+            "If your provider has a network firewall, open these ports BEFORE running:" \
+            "" \
+            "$(printf '  YOUR NEW SSH PORT: %s' "$SSH_PORT")" \
+            "  Open this exact SSH port only. Do not open the full 50000-60000 range." \
+            "" \
+            "$(printf '  %5s        SSH (temporary — closed after setup)' '22')" \
+            "$(printf '  %5s        HTTP' '80')" \
+            "$(printf '  %5s        HTTPS' '443')" \
+            "$(printf '  %5s        SSH (custom port for this install)' "$SSH_PORT")"
+    fi
 fi
 
 echo ""
@@ -1267,6 +1306,7 @@ if tty -s 2>/dev/null && gum confirm "Install Cloudflare Tunnel (cloudflared) fo
 
     if command -v cloudflared &>/dev/null; then
         log "cloudflared installed (run 'cloudflared tunnel login' to authenticate)"
+        checkpoint_mark_done "cloudflared"
 
         gum style --border rounded --border-foreground 3 --foreground 3 --padding "0 2" --margin "0 2" \
             "⚠  cloudflared installed" \
@@ -1281,7 +1321,6 @@ if tty -s 2>/dev/null && gum confirm "Install Cloudflare Tunnel (cloudflared) fo
         warn "cloudflared installation failed — skipping"
     fi
 fi
-    checkpoint_mark_done "cloudflared"
 }
 install_cloudflared
 
@@ -1441,31 +1480,53 @@ if ! tty -s 2>/dev/null; then
     exit 0
 fi
 
-gum style \
-    --border rounded \
-    --border-foreground 1 \
-    --foreground 1 \
-    --padding "0 2" \
-    --margin "0 2" \
-    --bold \
-    "CRITICAL: Verify SSH before lock-down" \
-    "" \
-    "Keep this terminal open." \
-    "If disconnected: sudo screen -r hardening" \
-    "Open exact port $SSH_PORT in your provider firewall if needed." \
-    "Do not open the full 50000-60000 range." \
-    "Then open a NEW terminal and test:"
-copy_block "ssh $NEW_USER@$SSH_HOST -p $SSH_PORT"
+if [ "$RESUME_MODE" = true ]; then
+    log "Resume mode — SSH already verified (connected on port $SSH_PORT)"
+else
+    gum style \
+        --border rounded \
+        --border-foreground 1 \
+        --foreground 1 \
+        --padding "0 2" \
+        --margin "0 2" \
+        --bold \
+        "CRITICAL: Verify SSH before lock-down" \
+        "" \
+        "Keep this terminal open." \
+        "If disconnected: sudo screen -r hardening" \
+        "Open exact port $SSH_PORT in your provider firewall if needed." \
+        "Do not open the full 50000-60000 range." \
+        "Then open a NEW terminal and test:"
+    copy_block "ssh $NEW_USER@$SSH_HOST -p $SSH_PORT"
 
-gum style \
-    --foreground 3 \
-    "  Only choose Yes if the NEW SSH session works." \
-    "" \
-    "  Yes: port 22 closes, password SSH is disabled, server may reboot" \
-    "  No:  keep port 22 and password SSH open for recovery"
-echo ""
+    gum style \
+        --foreground 3 \
+        "  Only choose Yes if the NEW SSH session works." \
+        "" \
+        "  Yes: port 22 closes, password SSH is disabled, server may reboot" \
+        "  No:  keep port 22 and password SSH open for recovery"
+    echo ""
 
-if gum confirm "Did the NEW SSH connection work?"; then
+    if ! gum confirm "Did the NEW SSH connection work?"; then
+        warn "SSH test failed — keeping port 22 and password auth open for safety"
+        echo ""
+        printf "  Fix the issue, then run these commands manually:\n"
+        echo ""
+        printf "  sudo find /etc/ssh/sshd_config.d -maxdepth 1 -type f -name '*.conf' ! -name 'hardening.conf' ! -name 'zz-setup-keepalive.conf' -exec sed -i -E 's/^([[:space:]]*)(PasswordAuthentication|PubkeyAuthentication|KbdInteractiveAuthentication|PermitRootLogin|AuthorizedKeysFile|AllowUsers)[[:space:]]+/# disabled by vps-hardening: \\0/' {} \\;\n"
+        printf "  sudo mkdir -p /etc/cloud/cloud.cfg.d && printf 'ssh_pwauth: false\\n' | sudo tee /etc/cloud/cloud.cfg.d/99-vps-hardening-ssh.cfg\n"
+        printf "  sudo sed -i 's/PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config.d/hardening.conf\n"
+        printf "  sudo sed -i '/^Port 22\$/d' /etc/ssh/sshd_config.d/hardening.conf\n"
+        printf "  sudo sshd -t && sudo sshd -T | grep -Ei 'passwordauthentication|pubkeyauthentication|kbdinteractiveauthentication|allowusers|port'\n"
+        printf "  sudo systemctl daemon-reload\n"
+        printf "  sudo systemctl restart ssh.socket\n"
+        printf "  sudo systemctl restart sshd\n"
+        printf "  sudo ufw delete allow 22/tcp\n"
+        echo ""
+        ELAPSED=$(( SECONDS - START_TIME ))
+        log "Setup completed in $(( ELAPSED / 60 ))m $(( ELAPSED % 60 ))s (CONFIRM declined)"
+        exit 0
+    fi
+fi
     echo ""
     gum style \
         --border rounded \
@@ -1585,20 +1646,6 @@ EOF
     else
         warn "Confirmation cancelled — keeping port 22 and password auth open"
     fi
-else
-    warn "SSH test failed — keeping port 22 and password auth open for safety"
-    echo ""
-    printf "  Fix the issue, then run these commands manually:\n"
-    echo ""
-    printf "  sudo find /etc/ssh/sshd_config.d -maxdepth 1 -type f -name '*.conf' ! -name 'hardening.conf' ! -name 'zz-setup-keepalive.conf' -exec sed -i -E 's/^([[:space:]]*)(PasswordAuthentication|PubkeyAuthentication|KbdInteractiveAuthentication|PermitRootLogin|AuthorizedKeysFile|AllowUsers)[[:space:]]+/# disabled by vps-hardening: \\0/' {} \\;\n"
-    printf "  sudo mkdir -p /etc/cloud/cloud.cfg.d && printf 'ssh_pwauth: false\\n' | sudo tee /etc/cloud/cloud.cfg.d/99-vps-hardening-ssh.cfg\n"
-    printf "  sudo sed -i 's/PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config.d/hardening.conf\n"
-    printf "  sudo sed -i '/^Port 22\$/d' /etc/ssh/sshd_config.d/hardening.conf\n"
-    printf "  sudo sshd -t && sudo sshd -T | grep -Ei 'passwordauthentication|pubkeyauthentication|kbdinteractiveauthentication|allowusers|port'\n"
-    printf "  sudo systemctl daemon-reload\n"
-    printf "  sudo systemctl restart ssh.socket\n"
-    printf "  sudo ufw delete allow 22/tcp\n"
-fi
 }
 finalize_confirm
 

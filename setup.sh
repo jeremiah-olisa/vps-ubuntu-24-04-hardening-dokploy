@@ -334,7 +334,7 @@ neutralize_ssh_auth_dropins() {
         if sudo grep -Eq '^[[:space:]]*(PasswordAuthentication|PubkeyAuthentication|KbdInteractiveAuthentication|PermitRootLogin|AuthorizedKeysFile|AllowUsers)[[:space:]]+' "$file"; then
             backup="${file}.pre-hardening.bak"
             [ -f "$backup" ] || sudo cp "$file" "$backup"
-            sudo sed -i -E 's/^([[:space:]]*)(PasswordAuthentication|PubkeyAuthentication|KbdInteractiveAuthentication|PermitRootLogin|AuthorizedKeysFile|AllowUsers)[[:space:]]+/# disabled by vps-hardening: &/' "$file"
+            sudo sed -i -E 's/^([[:space:]]*)(PasswordAuthentication|PubkeyAuthentication|KbdInteractiveAuthentication|PermitRootLogin|AuthorizedKeysFile|AllowUsers)[[:space:]]+/# disabled by vps-hardening: &/' "$file" || error "Failed to neutralize $(basename "$file")"
             log "Neutralized conflicting SSH auth directives in $(basename "$file")"
         fi
     done
@@ -1578,8 +1578,8 @@ else
         exit 0
     fi
 fi
-neutralize_ssh_auth_dropins
-disable_cloud_init_password_auth
+neutralize_ssh_auth_dropins || error "Failed to neutralize conflicting SSH auth directives"
+disable_cloud_init_password_auth || error "Failed to configure cloud-init for SSH"
 sudo tee /etc/ssh/sshd_config.d/hardening.conf > /dev/null << EOF || error "Failed to write hardening.conf"
 Port $SSH_PORT
 PermitRootLogin no
@@ -1674,11 +1674,11 @@ sudo touch "$HARDENING_DONE_FILE"
 checkpoint_clear
 
 if [ "$RESUME_MODE" = true ]; then
-    echo ""
-    echo ""
-    printf "  \033[1;32mHardening finalized — SSH already active on port %s, no reboot needed\033[0m\n" "$SSH_PORT"
-    printf "  \033[1;32mReconnect with: ssh %s@%s -p %s\033[0m\n" "$NEW_USER" "$SSH_HOST" "$SSH_PORT"
-    echo ""
+    echo "" 2>/dev/null || true
+    echo "" 2>/dev/null || true
+    printf "  \033[1;32mHardening finalized — SSH already active on port %s, no reboot needed\033[0m\n" "$SSH_PORT" 2>/dev/null || true
+    printf "  \033[1;32mReconnect with: ssh %s@%s -p %s\033[0m\n" "$NEW_USER" "$SSH_HOST" "$SSH_PORT" 2>/dev/null || true
+    echo "" 2>/dev/null || true
     log "Hardening complete (resume mode — skipped reboot)"
 else
     log "Port 22 closed, password auth disabled, rebooting to finalize"

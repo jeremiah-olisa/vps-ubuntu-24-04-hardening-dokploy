@@ -115,6 +115,26 @@ checkpoint_clear() {
     sudo rm -f "$CHECKPOINT_FILE"
 }
 
+# === HARDENING DONE CHECK ===
+HARDENING_DONE_FILE="/etc/.vps_hardening_done"
+if [ -f "$HARDENING_DONE_FILE" ]; then
+    [ -f "$CONFIG_FILE" ] && source "$CONFIG_FILE"
+    LOCAL_IP=$(ip -4 addr show | grep -oP 'inet \K[\d.]+' | grep -v '^127' | head -1)
+    PUBLIC_IP=$(curl -s --max-time 5 -4 ifconfig.me 2>/dev/null || echo "$LOCAL_IP")
+    SSH_HOST="$PUBLIC_IP"
+    echo ""
+    gum style --border double --border-foreground 2 --padding "1 4" --margin "0 2" --bold --align center \
+        "HARDENING ALREADY COMPLETE"
+    echo ""
+    printf "  $(gum style --bold 'SSH')      ssh %s@%s -p %s\n" "$NEW_USER" "$SSH_HOST" "$SSH_PORT"
+    printf "  $(gum style --bold 'Log')      sudo cat %s\n" "$LOG_FILE"
+    echo ""
+    echo "  To re-run:  sudo rm -f $HARDENING_DONE_FILE && sudo rm -f $CHECKPOINT_FILE && sudo $0"
+    echo ""
+    log "Script re-run skipped — hardening already done"
+    exit 0
+fi
+
 # === RESUME CHECK ===
 RESUME_MODE=false
 if checkpoint_load; then
@@ -479,7 +499,12 @@ elif [ "$SSH_PORT_CHOICE" = "Custom port — input your own" ]; then
             warn "Port must be between 1024 and 65535"; continue
         fi
         if ss -tlnp 2>/dev/null | grep -q ":$CUSTOM_PORT "; then
-            warn "Port $CUSTOM_PORT is already in use"; continue
+            _port_proc=$(ss -tlnp 2>/dev/null | grep ":$CUSTOM_PORT " | grep -oP 'users:\(\("([^"]+)"' | cut -d'"' -f2)
+            if [ "$_port_proc" = "sshd" ]; then
+                log "Port $CUSTOM_PORT is already in use by sshd — allowing"
+            else
+                warn "Port $CUSTOM_PORT is already in use by $_port_proc"; continue
+            fi
         fi
         SSH_PORT=$CUSTOM_PORT
         break
@@ -1471,6 +1496,11 @@ fi
 schedule_auto_lockdown
 
 finalize_confirm() {
+if [ -f "$HARDENING_DONE_FILE" ]; then
+    log "Hardening already completed — skipping CONFIRM"
+    return 0
+fi
+
 if ! tty -s 2>/dev/null; then
     warn "Terminal lost. Setup complete but port 22 and password auth still open."
     warn "Reconnect and run the CONFIRM step manually — see $USER_HOME/.vps_setup_summary"
@@ -1638,6 +1668,7 @@ EOF
         sudo rm -f /etc/ssh/sshd_config.d/zz-setup-keepalive.conf
 
         sudo sed -i 's/STATUS=pending_confirm/STATUS=complete/' "$USER_HOME/.vps_setup_summary" || error "Failed to update setup summary status"
+        sudo touch "$HARDENING_DONE_FILE"
         checkpoint_clear
         log "Port 22 closed, password auth disabled, rebooting to finalize"
 
